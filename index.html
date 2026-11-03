@@ -1,0 +1,1027 @@
+<!doctype html><html><head><meta charset=utf8><meta name=viewport content="width=device-width,initial-scale=1,viewport-fit=cover"><style>:root{color-scheme:light;box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}html{scroll-padding-top:env(safe-area-inset-top,0px)}body{margin:0;padding:0;font:14px -apple-system,BlinkMacSystemFont,sans-serif;background:#fff;color:#000}img{max-width:100%}[hidden]:not([hidden=until-found i]){display:none!important}</style></head><body>
+<title>D코스 주행 연습</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;600;700&family=Noto+Sans+KR:wght@400;500;700&display=swap">
+<style>
+/* Layout: full-bleed map canvas you drive on. Instrument cluster top-left (speed, limit sign, score sheet), next stop + signal top-right,
+   toasts bottom-centre, route minimap bottom-right, touch pads only on coarse pointers. */
+:root {
+  --font-ui: 'Noto Sans KR', system-ui, -apple-system, 'Apple SD Gothic Neo', 'Malgun Gothic', sans-serif;
+  --font-num: 'Barlow Condensed', 'Arial Narrow', system-ui, sans-serif;
+  --bg: #dfe5ea;
+  --panel: rgba(255, 255, 255, .93);
+  --panel-line: rgba(20, 40, 60, .16);
+  --fg: #14202b;
+  --muted: #566677;
+  --accent: #1b7fd0;
+  --accent-ink: #ffffff;
+  --good: #1f8a44;
+  --warn: #b86e00;
+  --bad: #d12f2f;
+  --tint: rgba(20, 40, 60, .08);
+  --sig-g: #2fbf5b;
+  --sig-y: #f5b800;
+  --sig-r: #e5342f;
+  --lamp-off: rgba(20, 40, 60, .16);
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #10161c;
+    --panel: rgba(22, 30, 38, .92);
+    --panel-line: rgba(255, 255, 255, .16);
+    --fg: #ecf1f5;
+    --muted: #9aa9b7;
+    --accent: #52a7f0;
+    --accent-ink: #0b1722;
+    --good: #4cc77a;
+    --warn: #f0b13a;
+    --bad: #ff6b66;
+    --tint: rgba(255, 255, 255, .08);
+    --lamp-off: rgba(255, 255, 255, .16);
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #10161c;
+  --panel: rgba(22, 30, 38, .92);
+  --panel-line: rgba(255, 255, 255, .16);
+  --fg: #ecf1f5;
+  --muted: #9aa9b7;
+  --accent: #52a7f0;
+  --accent-ink: #0b1722;
+  --good: #4cc77a;
+  --warn: #f0b13a;
+  --bad: #ff6b66;
+  --tint: rgba(255, 255, 255, .08);
+  --lamp-off: rgba(255, 255, 255, .16);
+  color-scheme: dark;
+}
+
+* { box-sizing: border-box; }
+html, body { height: 100%; }
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--fg);
+  font-family: var(--font-ui);
+  font-size: 14px;
+  overflow: hidden;
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+  -webkit-user-select: none;
+  user-select: none;
+}
+#view { position: fixed; inset: 0; width: 100%; height: 100%; display: block; touch-action: none; }
+
+.hud {
+  position: fixed;
+  background: var(--panel);
+  border: 1px solid var(--panel-line);
+  border-radius: 10px;
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+  padding: 10px 12px;
+  min-width: 0;
+}
+.hud .k { color: var(--muted); font-size: 12px; letter-spacing: .04em; }
+.num { font-family: var(--font-num); font-variant-numeric: tabular-nums; font-weight: 600; letter-spacing: .01em; }
+
+#hudL {
+  top: calc(12px + env(safe-area-inset-top, 0px));
+  left: max(16px, env(safe-area-inset-left, 0px));
+  width: 204px;
+  display: grid;
+  gap: 8px;
+}
+.cluster { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.speed { display: flex; align-items: baseline; gap: 4px; }
+#spd { font-size: 52px; line-height: .95; }
+.speed small { color: var(--muted); font-size: 12px; }
+#gear { font-size: 12px; color: var(--warn); min-height: 16px; }
+.limit {
+  flex: none;
+  width: 46px; height: 46px;
+  border-radius: 50%;
+  border: 5px solid var(--bad);
+  background: #fff;
+  color: #111;
+  display: grid; place-items: center;
+  font-size: 21px; line-height: 1;
+}
+.limit.over { animation: pulse .6s ease-in-out infinite alternate; }
+@keyframes pulse { to { transform: scale(1.1); } }
+
+.sheet { display: grid; grid-template-columns: auto 1fr; gap: 2px 10px; align-items: baseline; }
+.sheet b { text-align: right; font-size: 22px; line-height: 1.15; }
+#score.low { color: var(--bad); }
+.bar { height: 6px; border-radius: 3px; background: var(--tint); overflow: hidden; }
+.bar i { display: block; height: 100%; width: 0; background: var(--accent); }
+.meta { display: flex; justify-content: space-between; color: var(--muted); font-size: 12px; }
+.ghost {
+  appearance: none; font: inherit; font-size: 12px;
+  color: var(--fg); background: var(--tint);
+  border: 1px solid var(--panel-line); border-radius: 6px;
+  padding: 5px 8px; cursor: pointer;
+}
+.ghost:hover { background: var(--panel-line); }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+#hudR {
+  top: calc(12px + env(safe-area-inset-top, 0px));
+  right: max(16px, env(safe-area-inset-right, 0px));
+  width: 224px;
+  display: grid;
+  gap: 6px;
+}
+#nextName { font-size: 16px; font-weight: 700; line-height: 1.3; overflow-wrap: anywhere; }
+#nextDist { font-size: 22px; color: var(--accent); }
+.signal { display: flex; align-items: center; gap: 10px; padding-top: 8px; border-top: 1px solid var(--panel-line); }
+.lamps { display: flex; gap: 4px; padding: 4px 6px; background: #20262c; border-radius: 12px; }
+.lamp { width: 12px; height: 12px; border-radius: 50%; background: var(--lamp-off); }
+.lamps .lamp { background: #3a434b; }
+.lamp.g.on { background: var(--sig-g); box-shadow: 0 0 8px var(--sig-g); }
+.lamp.y.on { background: var(--sig-y); box-shadow: 0 0 8px var(--sig-y); }
+.lamp.r.on { background: var(--sig-r); box-shadow: 0 0 8px var(--sig-r); }
+#sigText { font-size: 13px; line-height: 1.35; min-width: 0; overflow-wrap: anywhere; }
+#sigText b { font-family: var(--font-num); font-size: 18px; font-weight: 600; }
+
+#toasts {
+  position: fixed;
+  left: 50%;
+  transform: translateX(-50%);
+  bottom: calc(28px + env(safe-area-inset-bottom, 0px));
+  display: grid; gap: 6px; justify-items: center;
+  pointer-events: none;
+  width: min(92vw, 420px);
+}
+.toast {
+  padding: 7px 14px; border-radius: 999px;
+  background: var(--panel); border: 1px solid var(--panel-line);
+  font-size: 14px; font-weight: 500;
+  animation: rise .22s ease-out;
+}
+.toast.bad { background: var(--bad); border-color: var(--bad); color: #fff; font-weight: 700; }
+.toast.ok { color: var(--good); }
+@keyframes rise { from { opacity: 0; transform: translateY(8px); } }
+
+#mini {
+  position: fixed;
+  right: max(16px, env(safe-area-inset-right, 0px));
+  bottom: calc(16px + env(safe-area-inset-bottom, 0px));
+  width: 96px; height: 218px;
+  border-radius: 8px;
+  border: 1px solid var(--panel-line);
+  background: #fff;
+}
+#keys {
+  position: fixed;
+  left: max(16px, env(safe-area-inset-left, 0px));
+  bottom: calc(16px + env(safe-area-inset-bottom, 0px));
+  background: var(--panel); border: 1px solid var(--panel-line);
+  border-radius: 8px; padding: 6px 10px;
+  color: var(--muted); font-size: 12px; line-height: 1.5;
+  max-width: calc(100vw - 180px);
+}
+kbd {
+  font-family: var(--font-num); font-size: 13px; font-weight: 600;
+  display: inline-block; min-width: 22px; text-align: center;
+  padding: 0 5px; margin-right: 2px;
+  border: 1px solid var(--panel-line); border-bottom-width: 2px;
+  border-radius: 4px; background: var(--tint); color: var(--fg);
+}
+
+#touch { display: none; }
+@media (pointer: coarse) {
+  #keys { display: none; }
+  #touch {
+    display: flex; justify-content: space-between; align-items: flex-end;
+    position: fixed;
+    left: max(16px, env(safe-area-inset-left, 0px));
+    right: max(16px, env(safe-area-inset-right, 0px));
+    bottom: calc(16px + env(safe-area-inset-bottom, 0px));
+    pointer-events: none;
+  }
+  #touch .pad { display: flex; gap: 10px; pointer-events: auto; }
+  #touch button {
+    appearance: none; font: inherit; font-weight: 700;
+    width: 76px; height: 76px; border-radius: 16px;
+    border: 1px solid var(--panel-line);
+    background: var(--panel); color: var(--fg);
+    font-size: 15px; touch-action: none;
+  }
+  #touch button.down { background: var(--accent); color: var(--accent-ink); }
+  #mini { bottom: calc(112px + env(safe-area-inset-bottom, 0px)); width: 72px; height: 163px; }
+  #toasts { bottom: calc(118px + env(safe-area-inset-bottom, 0px)); }
+}
+@media (max-width: 640px) {
+  #hudL { width: 176px; }
+  #spd { font-size: 44px; }
+  #hudR { width: 168px; }
+  #nextName { font-size: 14px; }
+  #mini { display: none; }
+}
+
+.overlay {
+  position: fixed; inset: 0;
+  display: grid; place-items: center;
+  background: rgba(10, 20, 30, .5);
+  padding: 16px;
+  overflow-y: auto;
+}
+.card {
+  background: var(--bg);
+  color: var(--fg);
+  border: 1px solid var(--panel-line);
+  border-radius: 14px;
+  width: min(100%, 440px);
+  padding: 22px 22px 18px;
+  display: grid; gap: 14px;
+  -webkit-user-select: text; user-select: text;
+}
+.banner {
+  margin: -22px -22px 0;
+  padding: 14px 22px;
+  background: var(--accent); color: var(--accent-ink);
+  border-radius: 13px 13px 0 0;
+  display: flex; align-items: baseline; gap: 10px;
+}
+.banner .num { font-size: 34px; line-height: 1; }
+.banner span:last-child { font-weight: 700; font-size: 17px; }
+.tabs { display: flex; gap: 8px; }
+.tab { flex: 1; padding: 10px 0; border: 1px solid var(--panel-line); border-radius: 8px; background: var(--bg); color: var(--fg); font-weight: 700; cursor: pointer; font-size: 15px; }
+.tab.active { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); }
+.tab:hover:not(.active) { background: var(--panel-line); }
+.card p { margin: 0; line-height: 1.6; }
+.card .small { color: var(--muted); font-size: 12px; }
+.keylist { margin: 0; padding: 0; list-style: none; display: grid; grid-template-columns: 1fr 1fr; gap: 6px 14px; font-size: 13px; }
+.keylist li { min-width: 0; }
+.primary {
+  appearance: none; font: inherit; font-weight: 700; font-size: 16px;
+  background: var(--accent); color: var(--accent-ink);
+  border: 0; border-radius: 10px; padding: 12px 16px; cursor: pointer;
+}
+.primary:hover { filter: brightness(1.07); }
+.score-big { display: flex; align-items: baseline; gap: 8px; }
+.score-big .num { font-size: 72px; line-height: .9; }
+.score-big small { color: var(--muted); }
+.rows { display: grid; gap: 4px; margin: 0; padding: 0; list-style: none; font-size: 13px; }
+.rows li { display: flex; justify-content: space-between; gap: 12px; padding: 5px 0; border-bottom: 1px solid var(--panel-line); }
+.rows li:last-child { border-bottom: 0; }
+.rows .pts { color: var(--bad); font-family: var(--font-num); font-size: 16px; font-weight: 600; }
+.banner.fail { background: var(--bad); color: var(--accent-ink); }
+.num.bad { color: var(--bad); }
+.card p.rule { font-weight: 700; font-size: 17px; line-height: 1.5; color: var(--bad); text-wrap: balance; }
+
+@media (prefers-reduced-motion: reduce) {
+  .toast, .limit.over { animation: none; }
+}
+</style>
+
+<canvas id="view" aria-label="D코스 주행 화면"></canvas>
+
+<section class="hud" id="hudL" aria-label="계기판">
+  <div class="cluster">
+    <div>
+      <div class="speed"><span class="num" id="spd">0</span><small>km/h</small></div>
+      <div id="gear"></div>
+    </div>
+    <div class="limit num" id="limit" title="제한속도">40</div>
+  </div>
+  <div class="sheet">
+    <span class="k">점수 (합격 80)</span><b class="num" id="score">100</b>
+    <span class="k">시간</span><b class="num" id="time">0:00.0</b>
+  </div>
+  <div>
+    <div class="bar"><i id="prog"></i></div>
+    <div class="meta"><span id="progTxt">0%</span><span id="cpTxt">0 / 0 지점</span></div>
+  </div>
+  <button class="ghost" id="restartBtn" type="button">다시 시작</button>
+</section>
+
+<section class="hud" id="hudR" aria-label="다음 안내">
+  <div class="k">다음 지점</div>
+  <div id="nextName">-</div>
+  <div class="num" id="nextDist">-</div>
+  <div class="signal" id="signal">
+    <div class="lamps" aria-hidden="true"><i class="lamp r" id="lampR"></i><i class="lamp y" id="lampY"></i><i class="lamp g" id="lampG"></i></div>
+    <div id="sigText">앞쪽 신호 없음</div>
+  </div>
+</section>
+
+<div id="toasts" aria-live="polite"></div>
+<canvas id="mini" width="192" height="436" aria-hidden="true"></canvas>
+
+<div id="keys">
+  <kbd>↑</kbd><kbd>↓</kbd><kbd>←</kbd><kbd>→</kbd> 주행
+  &nbsp;<kbd>Space</kbd> 급제동<br>
+  <kbd>R</kbd> 다시 &nbsp;<kbd>N</kbd><kbd>P</kbd> 지점 이동 &nbsp;<kbd>G</kbd> 안내선 &nbsp;<kbd>+</kbd><kbd>−</kbd> 확대
+</div>
+
+<div id="touch">
+  <div class="pad">
+    <button type="button" data-k="left" aria-label="왼쪽으로 조향">◀</button>
+    <button type="button" data-k="right" aria-label="오른쪽으로 조향">▶</button>
+  </div>
+  <div class="pad">
+    <button type="button" data-k="brake" aria-label="브레이크">브레이크</button>
+    <button type="button" data-k="gas" aria-label="가속">가속</button>
+  </div>
+</div>
+
+<div class="overlay" id="overlay">
+  <div class="card" id="cardStart">
+    <div class="banner"><span class="num">D</span><span>코스 주행 연습</span></div>
+    <div class="tabs" id="courseTabs">
+      <button class="tab" data-c="A">A 코스</button>
+      <button class="tab" data-c="B">B 코스</button>
+      <button class="tab active" data-c="D">D 코스</button>
+    </div>
+    <p>출발 지점에서 시작해 코스를 한 바퀴 돌고 종료 지점으로 돌아오면 끝나요. 100점에서 시작하고, 위반할 때마다 점수가 깎여요.</p>
+    <p class="rule">점수가 80점 미만으로 떨어지면 불합격입니다.</p>
+    <ul class="keylist">
+      <li><kbd>↑</kbd> 가속</li>
+      <li><kbd>↓</kbd> 브레이크 / 후진</li>
+      <li><kbd>←</kbd><kbd>→</kbd> 조향</li>
+      <li><kbd>Space</kbd> 급제동</li>
+      <li><kbd>N</kbd><kbd>P</kbd> 다음 / 이전 지점</li>
+      <li><kbd>R</kbd> 다시 시작</li>
+    </ul>
+    <p class="small">감점: 제한속도 초과 −5 · 차선 이탈 −5 · 도로 밖 이탈 −5 · 역주행 −10 · 적색 신호 통과 −30. 노란 띠가 내 차선이에요. 코스 경로와 신호 위치는 지도 사진에서 추정한 값이라 실제와 다를 수 있어요.</p>
+    <button class="primary" id="startBtn" type="button">시작</button>
+  </div>
+  <div class="card" id="cardEnd" hidden>
+    <div class="banner"><span class="num">D</span><span>합격</span></div>
+    <div class="score-big"><span class="num" id="endScore">100</span><small>점 · <span id="endTime">0:00.0</span></small></div>
+    <p id="endMsg"></p>
+    <ul class="rows" id="endRows"></ul>
+    <p class="small" id="endBest"></p>
+    <button class="primary" id="againBtn" type="button">다시 달리기</button>
+  </div>
+  <div class="card" id="cardFail" hidden>
+    <div class="banner fail"><span class="num">D</span><span>불합격</span></div>
+    <div class="score-big"><span class="num bad" id="failScore">0</span><small>점 · <span id="failTime">0:00.0</span></small></div>
+    <p class="rule">점수가 80점 미만으로 떨어지면 불합격입니다.</p>
+    <ul class="rows" id="failRows"></ul>
+    <button class="primary" id="failBtn" type="button">다시 시작하기</button>
+  </div>
+</div>
+
+<script>
+const Core = (() => {
+  const STEP = 1, LANE = 5, ROAD_W = 18;
+  const CAR = { L: 4.5, W: 1.9, WB: 2.7 };
+  const RULES = { limit: 40, speedPen: 5, speedCd: 3, offDist: 11, offPen: 5, offCd: 2.5, wrongPen: 10, wrongCd: 3, redPen: 30, pass: 80, laneHalf: 4.2, laneHold: 0.35, lanePen: 5, laneCd: 3 };
+  const PHASE = { g: 12, y: 3, r: 8 };
+  const CYCLE = PHASE.g + PHASE.y + PHASE.r;
+
+  /* 신호등 위치(지도 사진 좌표, px)와 신호 주기의 시작 어긋남(초) */
+  const JUNC = {
+    J1: { x: 178, y: 862, off: 0 },
+    J2: { x: 298, y: 777, off: 6 },
+    J3: { x: 350, y: 705, off: 13 },
+    J4: { x: 378, y: 605, off: 3 },
+    J5: { x: 373, y: 542, off: 9 },
+    J6: { x: 368, y: 457, off: 16 },
+    J7: { x: 283, y: 455, off: 1 },
+    J8: { x: 283, y: 360, off: 8 },
+    J9: { x: 368, y: 357, off: 14 },
+    JE1: { x: 440, y: 457, off: 4 },
+    JE2: { x: 440, y: 357, off: 11 },
+  };
+
+  /* 주행 순서대로 정리한 중심선: [x, y, 지점 이름, 신호 번호] */
+  const OUT = [
+    [182, 908, '출발'],
+    [182, 872],
+    [183, 858, '구암고교 앞', 'J1'],
+    [200, 851], [225, 849], [245, 845], [262, 837], [268, 833], [287, 813],
+    [301, 789, '가구골목 입구', 'J2'],
+    [323, 753], [343, 720],
+    [350, 708, '가구골목', 'J3'],
+    [360, 693], [370, 667], [374, 640],
+    [375, 607, '구암교회 앞', 'J4'],
+    [374, 573],
+    [373, 542, '칠곡동서 앞', 'J5'],
+    [372, 500],
+    [371, 470, '동천네거리', 'J6'],
+  ];
+  const LOOP_D = [
+    [366, 458], [345, 455], [320, 455], [300, 455],
+    [289, 451, '좌측 교차로', 'J7'],
+    [288, 425], [288, 400], [288, 380],
+    [293, 364, '상단 교차로(좌)', 'J8'],
+    [307, 362], [323, 360], [340, 357], [357, 355],
+    [369, 358, '상단 교차로(우)', 'J9'],
+    [371, 372],
+    [371, 400, '육교 아래'],
+    [371, 438, '동천네거리 통과', 'J6'],
+    [371, 478],
+  ];
+  const LOOP_A = [
+    [380, 458], [410, 457],
+    [440, 457, '우측 교차로', 'JE1'],
+    [440, 420], [440, 380],
+    [440, 357, '우측 상단 교차로', 'JE2'],
+    [410, 357], [385, 357],
+    [368, 357, '상단 교차로', 'J9'],
+    [368, 385], [368, 420, '육교 아래'],
+    [368, 440, '동천네거리 통과', 'J6'],
+    [368, 478]
+  ];
+  const LOOP_B = [
+    [368, 440], [368, 400, '육교 아래'],
+    [368, 375],
+    [368, 357, '상단 교차로', 'J9'],
+    [385, 357], [410, 357],
+    [440, 357, '우측 상단 교차로', 'JE2'],
+    [440, 380], [440, 420],
+    [440, 457, '우측 교차로', 'JE1'],
+    [410, 457], [385, 457],
+    [368, 457, '동천네거리 통과', 'J6'],
+    [368, 478]
+  ];
+  
+  const state = {};
+
+  function buildCourse(name) {
+    let loop = LOOP_D;
+    if (name === 'A') loop = LOOP_A;
+    if (name === 'B') loop = LOOP_B;
+
+    const toObj = (p) => ({ x: p[0], y: p[1], label: p[2], jid: p[3] });
+    const BACK = OUT.slice(0, -1).reverse().map((p, idx, arr) => {
+      if (!p[2]) return toObj(p);
+      const last = idx === arr.length - 1;
+      return { x: p[0], y: p[1], label: last ? '종료' : p[2] + ' (복귀)', jid: p[3] };
+    });
+    const center = [...OUT.map(toObj), ...loop.map(toObj), ...BACK];
+
+    const smooth = chaikin(center, 2);
+    const route = blur(resample(offsetPts(smooth, LANE), STEP), 2);
+    const N = route.length;
+    const sArr = new Float64Array(N);
+    for (let i = 1; i < N; i++) sArr[i] = sArr[i - 1] + Math.hypot(route[i].x - route[i - 1].x, route[i].y - route[i - 1].y);
+    const S_TOTAL = sArr[N - 1];
+    const ang = new Float64Array(N);
+    for (let i = 0; i < N; i++) {
+      const a = Math.max(0, i - 2), b = Math.min(N - 1, i + 2);
+      ang[i] = Math.atan2(route[b].y - route[a].y, route[b].x - route[a].x);
+    }
+
+    const cumC = [0];
+    for (let k = 1; k < center.length; k++) cumC[k] = cumC[k - 1] + Math.hypot(center[k].x - center[k - 1].x, center[k].y - center[k - 1].y);
+    const cps = [];
+    center.forEach((c, k) => {
+      if (!c.label) return;
+      const sEst = (cumC[k] / cumC[center.length - 1]) * S_TOTAL;
+      let lo = 0, hi = N - 1;
+      while (lo < hi) { const mid = (lo + hi) >> 1; if (sArr[mid] < sEst) lo = mid + 1; else hi = mid; }
+      let best = lo, bd = Infinity;
+      for (let i = Math.max(0, lo - 70); i <= Math.min(N - 1, lo + 70); i++) {
+        const d = (route[i].x - c.x) ** 2 + (route[i].y - c.y) ** 2;
+        if (d < bd) { bd = d; best = i; }
+      }
+      cps.push({ i: best, label: c.label, jid: c.jid });
+    });
+    cps[0].i = 0;
+    for (let k = 1; k < cps.length; k++) if (cps[k].i <= cps[k - 1].i) cps[k].i = cps[k - 1].i + 1;
+    cps[cps.length - 1].i = Math.min(cps[cps.length - 1].i, N - 4);
+    cps.forEach((c) => { c.x = route[c.i].x; c.y = route[c.i].y; });
+
+    state.name = name;
+    state.smooth = smooth;
+    state.route = route;
+    state.N = N;
+    state.sArr = sArr;
+    state.S_TOTAL = S_TOTAL;
+    state.ang = ang;
+    state.cps = cps;
+  }
+  buildCourse('D');
+
+  function chaikin(pts, n) {
+    let p = pts.map((q) => ({ x: q.x, y: q.y }));
+    for (let it = 0; it < n; it++) {
+      const q = [p[0]];
+      for (let i = 0; i < p.length - 1; i++) {
+        const a = p[i], b = p[i + 1];
+        q.push({ x: 0.75 * a.x + 0.25 * b.x, y: 0.75 * a.y + 0.25 * b.y });
+        q.push({ x: 0.25 * a.x + 0.75 * b.x, y: 0.25 * a.y + 0.75 * b.y });
+      }
+      q.push(p[p.length - 1]);
+      p = q;
+    }
+    return p;
+  }
+  /* 진행 방향 오른쪽으로 d 만큼 민 선 (우측통행 차로) */
+  function offsetPts(p, d) {
+    return p.map((q, i) => {
+      const a = p[Math.max(0, i - 1)], b = p[Math.min(p.length - 1, i + 1)];
+      let tx = b.x - a.x, ty = b.y - a.y;
+      const l = Math.hypot(tx, ty) || 1;
+      tx /= l; ty /= l;
+      return { x: q.x - ty * d, y: q.y + tx * d };
+    });
+  }
+  function resample(pts, h) {
+    const out = [{ x: pts[0].x, y: pts[0].y }];
+    let acc = 0, prev = pts[0];
+    for (let i = 1; i < pts.length; i++) {
+      const b = pts[i];
+      let a = prev;
+      let d = Math.hypot(b.x - a.x, b.y - a.y);
+      while (acc + d >= h) {
+        const t = (h - acc) / d;
+        a = { x: a.x + (b.x - a.x) * t, y: a.y + (b.y - a.y) * t };
+        out.push(a);
+        d = Math.hypot(b.x - a.x, b.y - a.y);
+        acc = 0;
+      }
+      acc += d;
+      prev = b;
+    }
+    const last = pts[pts.length - 1];
+    const e = out[out.length - 1];
+    if (Math.hypot(e.x - last.x, e.y - last.y) > 0.01) out.push({ x: last.x, y: last.y });
+    return out;
+  }
+  function blur(pts, passes) {
+    let p = pts;
+    for (let k = 0; k < passes; k++) {
+      p = p.map((q, i) => {
+        if (i < 2 || i > p.length - 3) return q;
+        let x = 0, y = 0;
+        for (let j = -2; j <= 2; j++) { x += p[i + j].x; y += p[i + j].y; }
+        return { x: x / 5, y: y / 5 };
+      });
+    }
+    return p;
+  }
+
+  const angDiff = (a, b) => {
+    let d = a - b;
+    while (d > Math.PI) d -= 2 * Math.PI;
+    while (d < -Math.PI) d += 2 * Math.PI;
+    return d;
+  };
+  function lightOf(jid, t, mode) {
+    if (mode === 'green') return { c: 'g', left: 99 };
+    if (mode === 'red') return { c: 'r', left: 99 };
+    const p = (((t + JUNC[jid].off) % CYCLE) + CYCLE) % CYCLE;
+    if (p < PHASE.g) return { c: 'g', left: PHASE.g - p };
+    if (p < PHASE.g + PHASE.y) return { c: 'y', left: PHASE.g + PHASE.y - p };
+    return { c: 'r', left: CYCLE - p };
+  }
+
+  const MAXV = 50 / 3.6, RMAX = 3;
+  function stepCar(car, inp, dt, offroad) {
+    car.steer += (inp.steer - car.steer) * Math.min(1, dt * 5);
+    const v = car.v;
+    let a;
+    if (inp.hand) a = v > 0 ? -9 : v < 0 ? 9 : 0;
+    else if (inp.gas > 0) a = v < -0.3 ? 8 : 3.4 * Math.max(0, 1 - Math.max(0, v) / (MAXV * 1.04));
+    else if (inp.brake > 0) a = v > 0.3 ? -8 : -2.2;
+    else a = v > 0 ? -0.9 : v < 0 ? 0.9 : 0;
+    if (offroad && v !== 0) a += v > 0 ? -3.5 : 3.5;
+    let nv = v + a * dt;
+    if (v !== 0 && Math.sign(nv) !== Math.sign(v) && (inp.hand || (!inp.gas && !inp.brake) || (inp.brake && v > 0) || (inp.gas && v < 0))) nv = 0;
+    nv = Math.max(-RMAX, Math.min(MAXV, nv));
+    const maxSt = 0.62 / (1 + Math.abs(nv) / 10);
+    car.h += (nv / CAR.WB) * Math.tan(car.steer * maxSt) * dt;
+    car.x += Math.cos(car.h) * nv * dt;
+    car.y += Math.sin(car.h) * nv * dt;
+    car.v = nv;
+  }
+
+  function createSim(cfg) {
+    const S = {
+      cfg: Object.assign({ lights: 'normal' }, cfg || {}),
+      state: 'ready', clock: 0,
+      car: { x: 0, y: 0, h: 0, v: 0, steer: 0 },
+      curI: 3, cpNext: 1, score: 100, time: 0, started: false,
+      offroad: false, dist: 0, wrong: false, braking: false, lat: 0, laneOut: false, laneT: 0,
+      events: [], cd: {}, log: [], skips: 0, result: null,
+    };
+    function place(i) {
+      const p = state.route[i];
+      S.car.x = p.x; S.car.y = p.y; S.car.h = state.ang[i]; S.car.v = 0; S.car.steer = 0;
+      S.curI = i;
+    }
+    function pen(key, reason, pts, cd) {
+      if (S.state !== 'running') return;
+      const last = S.cd[key];
+      if (last !== undefined && S.clock - last < cd) return;
+      S.cd[key] = S.clock;
+      S.score = Math.max(0, S.score - pts);
+      S.log.push({ reason, pts, t: S.time });
+      S.events.push({ type: 'penalty', reason, pts });
+      if (S.score < RULES.pass) {
+        S.state = 'failed';
+        S.result = { score: S.score, time: S.time, log: S.log.slice(), skips: S.skips, failed: true };
+        S.events.push({ type: 'fail' });
+      }
+    }
+    S.lightOf = (jid) => lightOf(jid, S.clock, S.cfg.lights);
+    S.reset = () => {
+      S.state = 'ready'; S.score = 100; S.time = 0; S.started = false; S.cpNext = 1;
+      S.offroad = false; S.wrong = false; S.dist = 0; S.braking = false; S.lat = 0; S.laneOut = false; S.laneT = 0;
+      S.events.length = 0; S.cd = {}; S.log = []; S.skips = 0; S.result = null;
+      place(3);
+    };
+    S.begin = () => { S.state = 'running'; };
+    S.warp = (dir) => {
+      if (S.state !== 'running') return;
+      const k = dir > 0 ? Math.min(state.cps.length - 1, S.cpNext + 1) : Math.max(1, S.cpNext - 1);
+      place(Math.max(3, state.cps[k].i - 30));
+      S.cpNext = k; S.skips++;
+      S.events.push({ type: 'warp' });
+    };
+    S.nextSignal = () => {
+      for (let k = S.cpNext; k < state.cps.length; k++) {
+        if (state.cps[k].jid) return { k, cp: state.cps[k], dist: Math.max(0, state.sArr[state.cps[k].i] - state.sArr[S.curI]), light: S.lightOf(state.cps[k].jid) };
+      }
+      return null;
+    };
+    S.update = (dt, inp) => {
+      S.clock += dt;
+      if (S.state === 'ready') return;
+      if (S.state === 'finished' || S.state === 'failed') { stepCar(S.car, { gas: 0, brake: 1, steer: 0, hand: false }, dt, false); return; }
+      S.braking = !!(inp.brake || inp.hand);
+      stepCar(S.car, inp, dt, S.offroad);
+      const c = S.car;
+      const lo = Math.max(0, S.curI - 20), hi = Math.min(state.N - 1, S.curI + 60);
+      let best = S.curI, bd = Infinity;
+      for (let i = lo; i <= hi; i++) {
+        const dx = state.route[i].x - c.x, dy = state.route[i].y - c.y, d = dx * dx + dy * dy;
+        if (d < bd) { bd = d; best = i; }
+      }
+      if (best > S.curI) S.curI = best;
+      S.dist = Math.sqrt(bd);
+      S.offroad = S.dist > RULES.offDist;
+      /* 내 차로 중심선에서 옆으로 벗어난 거리 (오른쪽이 +) */
+      S.lat = (c.x - state.route[best].x) * -Math.sin(state.ang[best]) + (c.y - state.route[best].y) * Math.cos(state.ang[best]);
+      S.laneOut = !S.offroad && Math.abs(S.lat) > RULES.laneHalf;
+      S.laneT = S.laneOut && Math.abs(c.v) > 1 ? S.laneT + dt : 0;
+      if (!S.started && Math.abs(c.v) > 0.3) S.started = true;
+      if (S.started) S.time += dt;
+      while (S.cpNext < state.cps.length && S.curI >= state.cps[S.cpNext].i) {
+        const cp = state.cps[S.cpNext];
+        S.events.push({ type: 'cp', label: cp.label, idx: S.cpNext });
+        if (cp.jid && lightOf(cp.jid, S.clock, S.cfg.lights).c === 'r') pen('red' + S.cpNext, '신호 위반 (적색)', RULES.redPen, 0);
+        S.cpNext++;
+      }
+      if (c.v * 3.6 > RULES.limit + 0.5) pen('speed', '제한속도 초과', RULES.speedPen, RULES.speedCd);
+      if (S.offroad && Math.abs(c.v) > 1) pen('off', '도로 밖 이탈', RULES.offPen, RULES.offCd);
+      if (S.laneT > RULES.laneHold) pen('lane', '차선 이탈', RULES.lanePen, RULES.laneCd);
+      const dirA = c.v >= 0 ? c.h : c.h + Math.PI;
+      S.wrong = Math.abs(angDiff(dirA, state.ang[S.curI])) > 1.75 && Math.abs(c.v) > 1.5;
+      if (S.wrong) pen('wrong', '역주행', RULES.wrongPen, RULES.wrongCd);
+      if (S.state === 'running' && S.cpNext >= state.cps.length) {
+        S.state = 'finished';
+        S.result = { score: S.score, time: S.time, log: S.log.slice(), skips: S.skips };
+        S.events.push({ type: 'finish' });
+      }
+    };
+    S.reset();
+    return S;
+  }
+
+  return { createSim, buildCourse, state, JUNC, RULES, CAR, ROAD_W, LANE, STEP, PHASE };
+})();
+/*__DOM__*/
+(() => {
+  const $ = (id) => document.getElementById(id);
+  const sim = Core.createSim();
+  const { state, buildCourse, JUNC, RULES, CAR, ROAD_W } = Core;
+
+  const canvas = $('view'), ctx = canvas.getContext('2d');
+  const mini = $('mini'), mctx = mini.getContext('2d');
+  const img = new Image();
+  let imgOK = false;
+  img.onload = () => { imgOK = true; };
+  img.src = 'map.jpg';
+
+  let roadPath, lanePath;
+  function initPaths() {
+    roadPath = new Path2D();
+    state.smooth.forEach((p, i) => (i ? roadPath.lineTo(p.x, p.y) : roadPath.moveTo(p.x, p.y)));
+    lanePath = new Path2D();
+    state.route.forEach((p, i) => (i ? lanePath.lineTo(p.x, p.y) : lanePath.moveTo(p.x, p.y)));
+  }
+  initPaths();
+
+  let W = 0, H = 0, dpr = 1, baseZoom = 7, zoomMul = 1, showGuide = true;
+  const cam = { x: state.route[3].x, y: state.route[3].y };
+  function resize() {
+    dpr = Math.min(window.devicePixelRatio || 1, 2);
+    W = window.innerWidth; H = window.innerHeight;
+    canvas.width = Math.round(W * dpr); canvas.height = Math.round(H * dpr);
+    baseZoom = Math.max(4.5, Math.min(10, Math.min(W, H) / 95));
+  }
+  window.addEventListener('resize', resize);
+  resize();
+
+  /* ---------- 입력 ---------- */
+  const keys = new Set();
+  const touch = { left: false, right: false, gas: false, brake: false };
+  const L = { gas: ['ArrowUp', 'KeyW'], brake: ['ArrowDown', 'KeyS'], left: ['ArrowLeft', 'KeyA'], right: ['ArrowRight', 'KeyD'] };
+  const held = (name) => L[name].some((k) => keys.has(k)) || touch[name];
+  const START_KEYS = ['Enter', 'Space', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'KeyW', 'KeyA', 'KeyS', 'KeyD'];
+
+  function restart() {
+    sim.reset(); sim.begin();
+    $('overlay').hidden = true;
+    $('toasts').textContent = '';
+    cam.x = sim.car.x; cam.y = sim.car.y;
+  }
+  window.addEventListener('keydown', (e) => {
+    if (e.metaKey || e.ctrlKey || e.altKey) return;
+    const c = e.code;
+    if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Space'].includes(c)) e.preventDefault();
+    keys.add(c);
+    if (e.repeat) return;
+    if (sim.state === 'ready' && START_KEYS.includes(c)) { restart(); return; }
+    if ((sim.state === 'finished' || sim.state === 'failed') && (c === 'Enter' || c === 'KeyR')) { restart(); return; }
+    if (c === 'KeyR') restart();
+    else if (c === 'KeyN') sim.warp(1);
+    else if (c === 'KeyP') sim.warp(-1);
+    else if (c === 'KeyG') showGuide = !showGuide;
+    else if (c === 'Equal' || c === 'NumpadAdd') zoomMul = Math.min(2, zoomMul * 1.2);
+    else if (c === 'Minus' || c === 'NumpadSubtract') zoomMul = Math.max(0.45, zoomMul / 1.2);
+  });
+  window.addEventListener('keyup', (e) => keys.delete(e.code));
+  window.addEventListener('blur', () => { keys.clear(); Object.keys(touch).forEach((k) => (touch[k] = false)); });
+  $('startBtn').addEventListener('click', restart);
+  $('againBtn').addEventListener('click', restart);
+  $('failBtn').addEventListener('click', restart);
+  $('restartBtn').addEventListener('click', (e) => { e.currentTarget.blur(); restart(); });
+  document.querySelectorAll('#touch button').forEach((b) => {
+    const k = b.dataset.k;
+    b.addEventListener('pointerdown', (e) => { e.preventDefault(); touch[k] = true; b.classList.add('down'); if (sim.state === 'ready') restart(); });
+    ['pointerup', 'pointercancel', 'pointerleave'].forEach((t) => b.addEventListener(t, () => { touch[k] = false; b.classList.remove('down'); }));
+  });
+  document.querySelectorAll('.tab').forEach((btn) => {
+    btn.addEventListener('click', (e) => {
+      document.querySelectorAll('.tab').forEach((b) => b.classList.remove('active'));
+      e.target.classList.add('active');
+      const c = e.target.dataset.c;
+      buildCourse(c);
+      initPaths();
+      sim.reset();
+      cam.x = sim.car.x; cam.y = sim.car.y;
+      document.querySelectorAll('.banner .num').forEach((el) => (el.textContent = c));
+    });
+  });
+
+  /* ---------- 안내 메시지 ---------- */
+  function toast(text, kind) {
+    const box = $('toasts');
+    const d = document.createElement('div');
+    d.className = 'toast ' + kind;
+    d.textContent = text;
+    box.appendChild(d);
+    while (box.children.length > 4) box.removeChild(box.firstChild);
+    setTimeout(() => d.remove(), 2600);
+  }
+  const fmtTime = (t) => {
+    const m = Math.floor(t / 60), s = t - m * 60;
+    return m + ':' + s.toFixed(1).padStart(4, '0');
+  };
+  function showResult() {
+    const r = sim.result;
+    $('endScore').textContent = r.score;
+    $('endTime').textContent = fmtTime(r.time);
+    $('endMsg').textContent = r.score >= 90 ? '아주 안정적으로 달렸어요.' : '합격선 안에서 완주했어요. 감점 항목을 확인해 보세요.';
+    const rows = $('endRows');
+    rows.textContent = '';
+    const agg = {};
+    r.log.forEach((x) => { (agg[x.reason] = agg[x.reason] || { n: 0, pts: 0 }); agg[x.reason].n++; agg[x.reason].pts += x.pts; });
+    const keysA = Object.keys(agg);
+    if (!keysA.length) {
+      const li = document.createElement('li'); li.textContent = '감점 없음'; rows.appendChild(li);
+    }
+    keysA.forEach((name) => {
+      const li = document.createElement('li');
+      const a = document.createElement('span'); a.textContent = name + ' · ' + agg[name].n + '회';
+      const b = document.createElement('span'); b.className = 'pts'; b.textContent = '−' + agg[name].pts;
+      li.append(a, b); rows.appendChild(li);
+    });
+    if (r.skips) {
+      const li = document.createElement('li'); li.textContent = '지점 이동 ' + r.skips + '회 사용'; rows.appendChild(li);
+    }
+    let best = null;
+    try { best = JSON.parse(localStorage.getItem('dcourse-best-' + state.name) || 'null'); } catch (e) { best = null; }
+    const better = !best || r.score > best.score || (r.score === best.score && r.time < best.time);
+    if (better && !r.skips) {
+      try { localStorage.setItem('dcourse-best-' + state.name, JSON.stringify({ score: r.score, time: r.time })); } catch (e) { /* 저장 불가 */ }
+      $('endBest').textContent = best ? '이 브라우저의 최고 기록을 갱신했어요.' : '이 브라우저의 첫 기록이에요.';
+    } else {
+      $('endBest').textContent = best ? '최고 기록 ' + best.score + '점 · ' + fmtTime(best.time) : '';
+    }
+    $('cardStart').hidden = true; $('cardFail').hidden = true; $('cardEnd').hidden = false; $('overlay').hidden = false;
+  }
+  function showFail() {
+    const r = sim.result;
+    $('failScore').textContent = r.score;
+    $('failTime').textContent = fmtTime(r.time);
+    const rows = $('failRows');
+    rows.textContent = '';
+    const agg = {};
+    r.log.forEach((x) => { (agg[x.reason] = agg[x.reason] || { n: 0, pts: 0 }); agg[x.reason].n++; agg[x.reason].pts += x.pts; });
+    Object.keys(agg).forEach((name) => {
+      const li = document.createElement('li');
+      const a = document.createElement('span'); a.textContent = name + ' · ' + agg[name].n + '회';
+      const b = document.createElement('span'); b.className = 'pts'; b.textContent = '−' + agg[name].pts;
+      li.append(a, b); rows.appendChild(li);
+    });
+    $('cardStart').hidden = true; $('cardEnd').hidden = true; $('cardFail').hidden = false; $('overlay').hidden = false;
+    $('failBtn').focus();
+  }
+
+  /* ---------- 그리기 ---------- */
+  function rr(x, y, w, h, r) {
+    ctx.beginPath();
+    ctx.moveTo(x + r, y);
+    ctx.arcTo(x + w, y, x + w, y + h, r);
+    ctx.arcTo(x + w, y + h, x, y + h, r);
+    ctx.arcTo(x, y + h, x, y, r);
+    ctx.arcTo(x, y, x + w, y, r);
+    ctx.closePath();
+  }
+  const SIGC = { g: '#2fbf5b', y: '#f5b800', r: '#e5342f' };
+
+  function drawCar() {
+    const c = sim.car;
+    ctx.save();
+    ctx.translate(c.x, c.y); ctx.rotate(c.h);
+    const g = ctx.createLinearGradient(2.2, 0, 13, 0);
+    g.addColorStop(0, 'rgba(255,244,180,.38)'); g.addColorStop(1, 'rgba(255,244,180,0)');
+    ctx.fillStyle = g;
+    ctx.beginPath(); ctx.moveTo(2.2, -0.7); ctx.lineTo(13, -3); ctx.lineTo(13, 3); ctx.lineTo(2.2, 0.7); ctx.closePath(); ctx.fill();
+    ctx.fillStyle = 'rgba(0,0,0,.28)'; rr(-2.2, -0.7, CAR.L, CAR.W, 0.6); ctx.fill();
+    ctx.fillStyle = '#d8333a'; rr(-CAR.L / 2, -CAR.W / 2, CAR.L, CAR.W, 0.55); ctx.fill();
+    ctx.fillStyle = '#a82229'; rr(-1.2, -0.78, 2.2, 1.56, 0.35); ctx.fill();
+    ctx.fillStyle = '#18222c'; rr(0.9, -0.74, 0.8, 1.48, 0.25); ctx.fill();
+    ctx.fillStyle = '#fff6c8'; ctx.fillRect(CAR.L / 2 - 0.35, -0.8, 0.3, 0.5); ctx.fillRect(CAR.L / 2 - 0.35, 0.3, 0.3, 0.5);
+    ctx.fillStyle = sim.braking ? '#ff2a2a' : '#7a1217';
+    ctx.fillRect(-CAR.L / 2, -0.85, 0.3, 0.55); ctx.fillRect(-CAR.L / 2, 0.3, 0.3, 0.55);
+    ctx.restore();
+  }
+
+  function draw(ts) {
+    const z = baseZoom * zoomMul;
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.fillStyle = '#dfe5ea';
+    ctx.fillRect(0, 0, W, H);
+    ctx.setTransform(dpr * z, 0, 0, dpr * z, dpr * (W / 2 - cam.x * z), dpr * (H / 2 - cam.y * z));
+    ctx.imageSmoothingEnabled = true;
+    ctx.imageSmoothingQuality = 'high';
+    if (imgOK) ctx.drawImage(img, 0, 0);
+
+    ctx.lineJoin = 'round'; ctx.lineCap = 'round';
+    ctx.strokeStyle = 'rgba(56,62,70,.82)'; ctx.lineWidth = ROAD_W; ctx.stroke(roadPath);
+    ctx.strokeStyle = 'rgba(255,255,255,.6)'; ctx.lineWidth = 0.45; ctx.setLineDash([3, 3]); ctx.stroke(roadPath); ctx.setLineDash([]);
+
+    if (showGuide) {
+      ctx.strokeStyle = 'rgba(255,255,255,.3)'; ctx.lineWidth = 0.5; ctx.setLineDash([1, 2.5]); ctx.stroke(lanePath);
+      const a = sim.curI, b = Math.min(state.route.length - 1, a + 160);
+      ctx.beginPath(); ctx.moveTo(state.route[a].x, state.route[a].y);
+      for (let i = a + 1; i <= b; i++) ctx.lineTo(state.route[i].x, state.route[i].y);
+      ctx.setLineDash([]);
+      ctx.strokeStyle = sim.laneOut ? 'rgba(255,60,60,.34)' : 'rgba(255,214,64,.2)'; ctx.lineWidth = RULES.laneHalf * 2; ctx.lineCap = 'butt'; ctx.stroke();
+      ctx.lineCap = 'round';
+      ctx.strokeStyle = 'rgba(255,214,64,.95)'; ctx.lineWidth = 0.9; ctx.setLineDash([2.5, 2.5]); ctx.stroke();
+      ctx.setLineDash([]);
+    }
+
+    /* 정지선 */
+    ctx.strokeStyle = 'rgba(255,255,255,.9)'; ctx.lineWidth = 0.6; ctx.lineCap = 'butt';
+    state.cps.forEach((cp) => {
+      if (!cp.jid) return;
+      const a = state.ang[cp.i], nx = -Math.sin(a), ny = Math.cos(a);
+      ctx.beginPath(); ctx.moveTo(cp.x - nx * 4.6, cp.y - ny * 4.6); ctx.lineTo(cp.x + nx * 4.6, cp.y + ny * 4.6); ctx.stroke();
+    });
+    ctx.lineCap = 'round';
+
+    /* 신호등 */
+    Object.keys(JUNC).forEach((id) => {
+      const j = JUNC[id], st = sim.lightOf(id);
+      ctx.fillStyle = '#20262c'; rr(j.x - 2.2, j.y - 4.2, 4.4, 8.4, 1.4); ctx.fill();
+      ['r', 'y', 'g'].forEach((c, n) => {
+        ctx.beginPath(); ctx.arc(j.x, j.y - 2.6 + n * 2.6, 0.95, 0, 7);
+        ctx.fillStyle = st.c === c ? SIGC[c] : '#4a535c'; ctx.fill();
+      });
+    });
+
+    /* 다음 지점 게이트 */
+    if (sim.cpNext < state.cps.length) {
+      const cp = state.cps[sim.cpNext], a = state.ang[cp.i], nx = -Math.sin(a), ny = Math.cos(a);
+      const pulse = 0.6 + 0.4 * Math.sin(ts / 260);
+      ctx.strokeStyle = 'rgba(255,214,64,' + pulse.toFixed(2) + ')'; ctx.lineWidth = 1.1; ctx.lineCap = 'butt';
+      ctx.beginPath(); ctx.moveTo(cp.x - nx * 7, cp.y - ny * 7); ctx.lineTo(cp.x + nx * 7, cp.y + ny * 7); ctx.stroke();
+      ctx.lineCap = 'round';
+    }
+    drawCar();
+
+    /* 화면 좌표 요소 */
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    if (sim.state === 'running' && (sim.offroad || sim.wrong)) {
+      ctx.fillStyle = 'rgba(224,49,49,.16)'; ctx.fillRect(0, 0, W, H);
+    } else if (sim.state === 'running' && sim.laneOut) {
+      ctx.fillStyle = 'rgba(224,49,49,.09)'; ctx.fillRect(0, 0, W, H);
+    }
+    ctx.font = '700 13px "Noto Sans KR", system-ui, sans-serif';
+    ctx.textAlign = 'center'; ctx.lineJoin = 'round';
+    state.cps.forEach((cp, k) => {
+      if (k < sim.cpNext && k !== 0) return;
+      const sx = (cp.x - cam.x) * z + W / 2, sy = (cp.y - cam.y) * z + H / 2;
+      if (sx < -60 || sx > W + 60 || sy < -30 || sy > H + 30) return;
+      if (Math.hypot(cp.x - sim.car.x, cp.y - sim.car.y) > 70) return;
+      ctx.lineWidth = 4; ctx.strokeStyle = 'rgba(255,255,255,.95)'; ctx.strokeText(cp.label, sx, sy - 34);
+      ctx.fillStyle = k === sim.cpNext ? '#9a5b00' : '#243342'; ctx.fillText(cp.label, sx, sy - 34);
+    });
+  }
+
+  function drawMini() {
+    mctx.setTransform(1, 0, 0, 1, 0, 0);
+    mctx.fillStyle = '#fff'; mctx.fillRect(0, 0, mini.width, mini.height);
+    const rx = 150, ry = 335, rw = 260, rh = 590, sc = mini.width / rw;
+    if (imgOK) mctx.drawImage(img, rx, ry, rw, rh, 0, 0, mini.width, mini.height);
+    mctx.setTransform(sc, 0, 0, sc, -rx * sc, -ry * sc);
+    mctx.lineWidth = 2.4; mctx.strokeStyle = 'rgba(27,127,208,.9)'; mctx.lineJoin = 'round'; mctx.stroke(lanePath);
+    if (sim.cpNext < state.cps.length) { mctx.fillStyle = '#f2a900'; mctx.beginPath(); mctx.arc(state.cps[sim.cpNext].x, state.cps[sim.cpNext].y, 5, 0, 7); mctx.fill(); }
+    mctx.fillStyle = '#d8333a'; mctx.strokeStyle = '#fff'; mctx.lineWidth = 2;
+    mctx.beginPath(); mctx.arc(sim.car.x, sim.car.y, 5, 0, 7); mctx.fill(); mctx.stroke();
+  }
+
+  /* ---------- 계기판 ---------- */
+  const last = {};
+  const setText = (k, node, txt) => { if (last[k] !== txt) { node.textContent = txt; last[k] = txt; } };
+  const lamps = { r: $('lampR'), y: $('lampY'), g: $('lampG') };
+  const SIGNAME = { g: '초록', y: '노랑', r: '빨강' };
+  function updateHud() {
+    const kmh = sim.car.v * 3.6;
+    setText('spd', $('spd'), String(Math.round(Math.abs(kmh))));
+    setText('gear', $('gear'), kmh < -0.5 ? '후진' : '');
+    setText('limit', $('limit'), String(RULES.limit));
+    $('limit').classList.toggle('over', kmh > RULES.limit + 0.5);
+    setText('score', $('score'), String(sim.score));
+    $('score').classList.toggle('low', sim.score < 90);
+    setText('time', $('time'), fmtTime(sim.time));
+    const pct = Math.round((state.sArr[sim.curI] / state.S_TOTAL) * 100);
+    $('prog').style.width = pct + '%';
+    setText('pct', $('progTxt'), pct + '%');
+    setText('cpt', $('cpTxt'), Math.min(sim.cpNext, state.cps.length) - 1 + ' / ' + (state.cps.length - 1) + ' 지점');
+    if (sim.cpNext < state.cps.length) {
+      const cp = state.cps[sim.cpNext];
+      setText('nn', $('nextName'), cp.label);
+      setText('nd', $('nextDist'), Math.max(0, Math.round(state.sArr[cp.i] - state.sArr[sim.curI])) + ' m');
+    } else {
+      setText('nn', $('nextName'), '종료');
+      setText('nd', $('nextDist'), '');
+    }
+    const ns = sim.nextSignal();
+    if (ns) {
+      const c = ns.light.c;
+      Object.keys(lamps).forEach((k) => lamps[k].classList.toggle('on', k === c));
+      const html = '다음 신호 ' + Math.round(ns.dist) + ' m<br>' + SIGNAME[c] + ' <b>' + Math.ceil(ns.light.left) + '</b>초';
+      if (last.sig !== html) { $('sigText').innerHTML = html; last.sig = html; }
+    } else {
+      Object.keys(lamps).forEach((k) => lamps[k].classList.remove('on'));
+      if (last.sig !== 'none') { $('sigText').textContent = '앞쪽 신호 없음'; last.sig = 'none'; }
+    }
+  }
+
+  /* ---------- 메인 루프 ---------- */
+  let prev = performance.now();
+  function frame(ts) {
+    const dt = Math.min(0.05, (ts - prev) / 1000);
+    prev = ts;
+    const inp = {
+      gas: held('gas') ? 1 : 0,
+      brake: held('brake') ? 1 : 0,
+      steer: (held('right') ? 1 : 0) - (held('left') ? 1 : 0),
+      hand: keys.has('Space'),
+    };
+    sim.update(dt, inp);
+    sim.events.splice(0).forEach((e) => {
+      if (e.type === 'penalty') toast('−' + e.pts + '  ' + e.reason, 'bad');
+      else if (e.type === 'cp') toast('✓ ' + e.label, 'ok');
+      else if (e.type === 'warp') toast('지점으로 이동했어요', 'ok');
+      else if (e.type === 'finish') showResult();
+      else if (e.type === 'fail') showFail();
+    });
+    const c = sim.car, lead = Math.max(0, c.v) * 0.9;
+    const tx = c.x + Math.cos(c.h) * lead, ty = c.y + Math.sin(c.h) * lead;
+    const k = 1 - Math.exp(-dt * 5);
+    cam.x += (tx - cam.x) * k; cam.y += (ty - cam.y) * k;
+    draw(ts);
+    if (mini.offsetParent !== null) drawMini();
+    updateHud();
+    requestAnimationFrame(frame);
+  }
+  requestAnimationFrame(frame);
+})();
+</script>
+
+</body></html>
